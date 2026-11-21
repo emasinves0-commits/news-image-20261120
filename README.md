@@ -8,13 +8,7 @@ Entry for the [make.fun](https://make.fun) competition **news-image-20261120**: 
 
 ## The poster
 
-`entry.png` is a 1024x1024 navy newspaper-style poster covering five stories from Friday 20 November 2026:
-
-1. **Justice** - Myanmar and China reject the ICJ's Rohingya genocide ruling (the ruling itself came 19 Nov).
-2. **Ukraine** - Russia hits Kyiv bridges in massive strikes; 8 killed, 28 hurt nationwide.
-3. **Europe** - EU and UK agree a Brexit reset package at the Brussels summit.
-4. **Markets** - Nikkei tumbles as the AI sell-off deepens; Anthropic shares slide after its IPO.
-5. **Politics** - Trump defends Putin ties at a White House press briefing after his Asia trip.
+`entry.png` is a 1024x1024 "modern data broadsheet" poster: pure white page, ink-black bold sans type, signal-red accents and thin black rules. It carries all 33 verified stories from Friday 20 November 2026: a huge date masthead, a by-the-numbers strip, a region bar, 3 illustrated leads (Kyiv bridges, Cyclone Akvan, the AI sell-off), 10 illustrated features, a world map with 33 numbered pins, 20 briefs, a DATE CHECK box and a sources line.
 
 ## Files
 
