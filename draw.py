@@ -1,6 +1,15 @@
 """make.fun news poster, Friday 20 November 2026: a modern data broadsheet (1024x1024).
 
-Round 3 design: pure white page, ink-black grotesque sans, signal-red accents, thin black rules.
+Round 4 (evolution of round 3, same journalism): pure white page, ink-black grotesque sans,
+signal-red accents, thin black rules. Changes vs round 3:
+  * typography: lead headlines 22pt / body 13pt, feature headlines 15pt / body 12pt (uniform across the
+    10 small panels), larger stats captions, kickers and map text; looser leading;
+  * map: 380x158 (was 322x118), cropped to lon -132..181 / lat 74..-48 so Europe and Asia are larger,
+    larger numbered pins; pin 33 now sits on New York (was Ottawa); south coast of Arabia fixed so
+    Mukalla lies on land; every pin re-checked against its city; "positions approximate" dropped;
+  * panels 4-13 redrawn as layered mini-scenes (sky, far/mid/foreground layers, glow, crowds, flags);
+    the 3 lead illustrations keep their compositions;
+  * no story text, number, date or attribution changed.
 Pure PIL drawing, no external images, no network, no randomness, no timestamps.
 Usage: python3 draw.py [output_dir]   (default: directory of this file)
 Writes <output_dir>/entry.png
@@ -284,139 +293,300 @@ def ill_markets(w, h):
     return s.out(), pts
 
 
-# ---------- FEATURE illustrations (about 188 x 76) ----------
+# ---------- richer helpers for the mini-scenes ----------
+_RAD = Image.radial_gradient("L")
+
+
+def glow(s, cx, cy, r, col, a=0.8):
+    n = max(2, int(2 * r * K))
+    m = _RAD.resize((n, n), Image.BILINEAR).point(lambda v: int(a * max(0, 255 - v)))
+    s.im.paste(Image.new("RGB", (n, n), col), (int((cx - r) * K), int((cy - r) * K)), m)
+
+
+def cloud(s, x, y, sc, col=(255, 255, 255)):
+    for dx, dy, r in ((0, 0, 5), (6, -3, 6), (13, -1, 5), (19, 1, 4), (7, 2, 5)):
+        s.ell(x + dx * sc - r * sc, y + dy * sc - r * sc * 0.6, x + dx * sc + r * sc, y + dy * sc + r * sc * 0.6, fill=col)
+
+
+def ridge(s, base, amp, x0, x1, bot, col, ph=0.0, f1=0.045, f2=0.11, step=3):
+    pts = [(x0, bot)]
+    x = x0
+    while x <= x1 + step:
+        y = base - amp * (0.55 * math.sin(x * f1 + ph) + 0.30 * math.sin(x * f2 + ph * 1.7) + 0.15 * math.sin(x * 0.27 + ph * 0.6))
+        pts.append((x, y))
+        x += step
+    pts.append((x1 + step, bot))
+    s.poly(pts, fill=col)
+
+
+def acacia(s, x, yb, sc, col=(40, 36, 30)):
+    s.line([(x, yb), (x - 1 * sc, yb - 9 * sc), (x + 2 * sc, yb - 13 * sc)], col, 1.3 * sc)
+    s.line([(x - 1 * sc, yb - 9 * sc), (x - 6 * sc, yb - 12 * sc)], col, 1.0 * sc)
+    s.ell(x - 11 * sc, yb - 17 * sc, x + 13 * sc, yb - 11 * sc, fill=col)
+    s.ell(x - 7 * sc, yb - 19 * sc, x + 8 * sc, yb - 14 * sc, fill=col)
+
+
+def palm(s, x, yb, hgt, trunk=(70, 52, 34), leaf=(52, 104, 50)):
+    s.line([(x, yb), (x - 1.5, yb - hgt * 0.5), (x - 2.5, yb - hgt)], trunk, 1.8)
+    tx, ty = x - 2.5, yb - hgt
+    for ang in (-170, -140, -110, -70, -40, -10):
+        a = math.radians(ang)
+        s.line([(tx, ty), (tx + hgt * 0.32 * math.cos(a), ty + hgt * 0.22 * math.sin(a) + hgt * 0.10)], leaf, 1.7)
+
+
+def pine(s, x, yb, hgt, col=(38, 70, 44)):
+    s.line([(x, yb), (x, yb - hgt * 0.55)], (60, 44, 30), 1.4)
+    s.ell(x - hgt * 0.34, yb - hgt, x + hgt * 0.34, yb - hgt * 0.62, fill=col)
+
+
+def head_person(s, x, yb, ph, col, skin=(226, 192, 162), hair=(30, 26, 24)):
+    s.rect(x - ph * 0.20, yb - ph * 0.62, x + ph * 0.20, yb, fill=col)
+    s.ell(x - ph * 0.15, yb - ph, x + ph * 0.15, yb - ph * 0.68, fill=skin)
+    s.pie([x - ph * 0.16, yb - ph * 1.01, x + ph * 0.16, yb - ph * 0.72], 180, 360, hair)
+
+
+def flag_wave(s, x, y, fw, fh, stripes, vertical=False, wave=1.2):
+    """Pole flag with a gentle wave (drawn as thin column strips)."""
+    n = len(stripes)
+    cols = max(8, int(fw))
+    for k in range(cols):
+        t = k / cols
+        dy = math.sin(t * 5.0) * wave
+        x0, x1 = x + t * fw, x + (t + 1.0 / cols) * fw + 0.3
+        for i, c in enumerate(stripes):
+            if vertical:
+                if int(t * n) == i:
+                    s.rect(x0, y + dy, x1, y + dy + fh, fill=c)
+            else:
+                s.rect(x0, y + dy + i * fh / n, x1, y + dy + (i + 1) * fh / n, fill=c)
+
+
+# ---------- FEATURE illustrations (about 188 x 62): layered mini-scenes ----------
 def ic_cop(w, h):
     s = SD(w, h, (170, 214, 226))
-    vgrad(s, 0, h, (150, 204, 226), (232, 244, 238))
-    s.poly([(0, h * 0.7), (w * 0.18, h * 0.38), (w * 0.34, h * 0.6), (w * 0.5, h * 0.3), (w * 0.7, h * 0.7)], fill=(96, 138, 150))
-    s.poly([(w * 0.5, h * 0.3), (w * 0.46, h * 0.4), (w * 0.52, h * 0.38), (w * 0.55, h * 0.42)], fill=(240, 246, 248))
-    s.rect(0, h * 0.7, w, h, fill=(38, 112, 170))  # Mediterranean
-    for k in range(6):
-        s.line([(10 + k * 30, h * 0.8), (18 + k * 30, h * 0.77), (26 + k * 30, h * 0.8)], (180, 214, 236), 1.1)
-    # conference hall
-    s.rect(16, h * 0.52, 92, h * 0.76, fill=(236, 238, 240), outline=(80, 84, 92), width=1)
-    s.pie([26, h * 0.34, 82, h * 0.7], 180, 360, (210, 224, 232))
-    for k in range(7):
-        s.line([(30 + k * 8, h * 0.52), (30 + k * 8, h * 0.76)], (120, 130, 140), 0.8)
-    for k, c in enumerate(((200, 16, 46), (0, 51, 153), (0, 130, 60), (250, 200, 0), (30, 30, 30))):  # flags
-        pole_flag(s, 22 + k * 14, h * 0.24 + (k % 2) * 3, h * 0.52, 10, 7, [c])
-    # globe + thermometer
-    cx, cy, r = w - 56, h * 0.46, 22
+    vgrad(s, 0, h, (96, 150, 204), (252, 226, 190))
+    glow(s, w * 0.34, h * 0.56, 46, (255, 240, 196), 0.95)
+    cloud(s, 96, 11, 0.9, (255, 244, 232))
+    cloud(s, 150, 20, 0.7, (255, 236, 220))
+    ridge(s, h * 0.50, 14, 0, w, h, (150, 168, 198), 0.4)
+    s.poly([(w * 0.52, h * 0.50), (w * 0.59, h * 0.20), (w * 0.69, h * 0.50)], fill=(120, 142, 176))
+    s.poly([(w * 0.59, h * 0.20), (w * 0.565, h * 0.31), (w * 0.59, h * 0.28), (w * 0.605, h * 0.33), (w * 0.62, h * 0.27), (w * 0.635, h * 0.31)], fill=(246, 248, 252))
+    ridge(s, h * 0.60, 9, 0, w, h, (84, 120, 148), 2.0)
+    vgrad(s, h * 0.66, h, (60, 140, 190), (22, 84, 140))
+    for k in range(9):
+        yy = h * 0.70 + (k % 3) * 5
+        xx = 14 + k * 21
+        s.line([(xx, yy), (xx + 7, yy - 2), (xx + 14, yy)], (190, 224, 242), 1.0)
+    for k in range(4):
+        s.rect(w * 0.30 - 14 + k * 3.5, h * 0.67 + k * 3.2, w * 0.30 + 14 - k * 3.5, h * 0.67 + k * 3.2 + 1.4, fill=(255, 238, 190))
+    s.rect(0, h * 0.84, w, h, fill=(206, 200, 188))
+    s.rect(0, h * 0.84, w, h * 0.86, fill=(168, 162, 152))
+    # conference pavilion
+    s.rect(10, h * 0.46, 104, h * 0.86, fill=(238, 240, 242), outline=(84, 90, 100), width=1)
+    s.pie([22, h * 0.26, 92, h * 0.78], 180, 360, (206, 222, 234))
+    s.pie([30, h * 0.34, 84, h * 0.70], 180, 360, (170, 200, 222))
+    for k in range(13):
+        s.line([(14 + k * 7, h * 0.52), (14 + k * 7, h * 0.86)], (120, 134, 150), 0.8)
+    s.rect(10, h * 0.62, 104, h * 0.64, fill=(120, 134, 150))
+    for k in range(4):
+        s.rect(18 + k * 22, h * 0.66, 26 + k * 22, h * 0.80, fill=(250, 214, 140))
+    for k, c in enumerate(((200, 16, 46), (0, 51, 153), (0, 130, 60), (250, 200, 0), (30, 30, 30), (240, 240, 240), (230, 100, 20))):
+        pole_flag(s, 16 + k * 14, h * 0.18 + (k % 2) * 3, h * 0.46, 10, 7, [c])
+    palm(s, 118, h * 0.88, 30)
+    palm(s, 6, h * 0.90, 24)
+    # globe on stand + thermometer
+    cx, cy, r = w - 56, h * 0.50, 21
+    glow(s, cx, cy, 34, (190, 226, 250), 0.6)
+    s.rect(cx - 9, h * 0.84, cx + 9, h * 0.92, fill=(70, 74, 84))
+    s.rect(cx - 2, cy + r - 2, cx + 2, h * 0.86, fill=(70, 74, 84))
     s.ell(cx - r, cy - r, cx + r, cy + r, fill=(40, 104, 170))
-    s.poly([(cx - 14, cy - 12), (cx - 2, cy - 18), (cx + 6, cy - 6), (cx - 4, cy + 4), (cx - 14, cy - 2)], fill=(70, 160, 90))
-    s.poly([(cx + 6, cy + 6), (cx + 16, cy), (cx + 14, cy + 14), (cx + 6, cy + 14)], fill=(70, 160, 90))
+    s.poly([(cx - 14, cy - 12), (cx - 2, cy - 18), (cx + 6, cy - 6), (cx - 4, cy + 4), (cx - 14, cy - 2)], fill=(80, 168, 96))
+    s.poly([(cx + 6, cy + 6), (cx + 16, cy), (cx + 14, cy + 14), (cx + 6, cy + 14)], fill=(80, 168, 96))
+    s.pie([cx - r, cy - r, cx + r, cy + r], 40, 200, (20, 60, 110))
     s.ell(cx - r, cy - r, cx + r, cy + r, outline=(20, 50, 90), width=1.2)
     tx = w - 16
-    s.rect(tx - 4, 10, tx + 4, h - 16, fill=(250, 250, 250), outline=(90, 90, 96), width=1)
-    s.rect(tx - 2, 24, tx + 2, h - 14, fill=(200, 30, 30))
-    s.ell(tx - 8, h - 20, tx + 8, h - 4, fill=(200, 30, 30), outline=(90, 90, 96), width=1)
+    s.rect(tx - 4, 8, tx + 4, h - 16, fill=(250, 250, 250), outline=(90, 90, 96), width=1)
+    s.rect(tx - 2, 20, tx + 2, h - 14, fill=(200, 30, 30))
+    for k in range(5):
+        s.line([(tx + 5, 14 + k * 8), (tx + 9, 14 + k * 8)], (90, 90, 96), 0.9)
+    s.ell(tx - 8, h - 21, tx + 8, h - 5, fill=(200, 30, 30), outline=(90, 90, 96), width=1)
+    for k, c in enumerate(((60, 70, 100), (120, 60, 60), (50, 90, 80), (30, 30, 36), (90, 70, 110))):
+        person(s, 126 + k * 7, h - 1, 17 + (k * 3) % 5, c)
     return s.out()
 
 
 def ic_scales(w, h):
     s = SD(w, h, (214, 224, 232))
-    vgrad(s, 0, h, (232, 238, 244), (178, 194, 208))
+    vgrad(s, 0, h, (126, 148, 190), (250, 226, 208))
+    glow(s, w * 0.5, h * 0.62, 70, (255, 238, 214), 0.8)
+    cloud(s, 18, 16, 0.8, (255, 240, 232))
+    cloud(s, 150, 10, 0.9, (255, 240, 232))
+    ridge(s, h * 0.66, 6, 0, w, h, (74, 104, 82), 1.1, 0.08, 0.2)
+    # Peace-Palace-like court: central hall + two towers
     bx0, bx1 = w * 0.30, w * 0.70
-    s.rect(bx0 - 6, h - 10, bx1 + 6, h, fill=(120, 124, 132))
-    s.rect(bx0 - 3, h - 15, bx1 + 3, h - 10, fill=(150, 154, 160))
-    s.poly([(bx0 - 4, 30), ((bx0 + bx1) / 2, 12), (bx1 + 4, 30)], fill=(240, 236, 228), outline=(90, 90, 96), width=1.4)
-    s.rect(bx0 - 2, 30, bx1 + 2, 35, fill=(226, 222, 212), outline=(90, 90, 96), width=1)
-    n = 6
-    for i in range(n):
-        cx = bx0 + 6 + i * (bx1 - bx0 - 12) / (n - 1)
-        s.rect(cx - 3.5, 35, cx + 3.5, h - 15, fill=(240, 236, 228), outline=(120, 120, 126), width=1)
-    cxm = (bx0 + bx1) / 2
-    s.ell(cxm - 4, 20, cxm + 4, 28, fill=(176, 150, 70))
-    # Myanmar flag (left)
-    fx, fy = 14, 16
-    pole_flag(s, fx, fy, h - 4, 40, 26, [(254, 203, 0), (52, 177, 102), (234, 40, 57)])
-    s.poly(star(fx + 20, fy + 13, 7.5), fill=(255, 255, 255))
-    # China flag (right)
-    gx = w - 54
-    s.line([(gx, 14), (gx, h - 4)], (70, 70, 76), 1.4)
-    s.rect(gx, fy, gx + 40, fy + 26, fill=(222, 41, 16))
-    s.poly(star(gx + 8, fy + 8, 5.4), fill=(255, 222, 0))
+    wall, shade = (232, 224, 212), (150, 140, 130)
+    for tx0 in (bx0 - 18, bx1 + 2):
+        s.rect(tx0, h * 0.30, tx0 + 16, h * 0.86, fill=(214, 204, 190), outline=shade, width=1)
+        s.poly([(tx0 - 2, h * 0.30), (tx0 + 8, h * 0.02), (tx0 + 18, h * 0.30)], fill=(86, 100, 116))
+        s.rect(tx0 + 5, h * 0.40, tx0 + 11, h * 0.52, fill=(70, 62, 60))
+        s.pie([tx0 + 5, h * 0.37, tx0 + 11, h * 0.43], 180, 360, (70, 62, 60))
+    s.rect(bx0, h * 0.40, bx1, h * 0.86, fill=wall, outline=shade, width=1)
+    s.poly([(bx0 - 3, h * 0.40), ((bx0 + bx1) / 2, h * 0.16), (bx1 + 3, h * 0.40)], fill=(240, 234, 224), outline=shade, width=1.2)
+    s.ell((bx0 + bx1) / 2 - 5, h * 0.24, (bx0 + bx1) / 2 + 5, h * 0.34, fill=(176, 150, 70))
+    for i in range(7):
+        cx = bx0 + 5 + i * (bx1 - bx0 - 10) / 6
+        s.rect(cx - 2.6, h * 0.46, cx + 2.6, h * 0.82, fill=(248, 244, 236), outline=(160, 154, 146), width=0.8)
+    s.rect(bx0 + 20, h * 0.60, bx1 - 20, h * 0.82, fill=(70, 58, 50))
+    for k in range(6):
+        s.rect(bx0 - 6 + k * 0.5, h * 0.82 + k * 2.2, bx1 + 6 - k * 0.5, h * 0.82 + k * 2.2 + 2.2, fill=(206 - k * 8, 200 - k * 8, 192 - k * 8))
+    s.rect(0, h * 0.94, w, h, fill=(96, 92, 90))
+    # flags (Myanmar left, China right), waving
+    s.line([(14, h * 0.18), (14, h * 0.96)], (70, 70, 76), 1.6)
+    flag_wave(s, 14, h * 0.20, 42, 27, [(254, 203, 0), (52, 177, 102), (234, 40, 57)])
+    s.poly(star(14 + 21, h * 0.20 + 14, 7.5), fill=(255, 255, 255))
+    gx = w - 56
+    s.line([(gx, h * 0.18), (gx, h * 0.96)], (70, 70, 76), 1.6)
+    flag_wave(s, gx, h * 0.20, 42, 27, [(222, 41, 16)], wave=1.0)
+    s.poly(star(gx + 8, h * 0.20 + 8, 5.4), fill=(255, 222, 0))
     for sx, sy in ((16, 4), (20, 8), (20, 13), (16, 17)):
-        s.poly(star(gx + sx, fy + sy, 1.8), fill=(255, 222, 0))
-    # gavel
-    s.rect(w * 0.43, h - 20, w * 0.57, h - 16, fill=(120, 84, 40))
+        s.poly(star(gx + sx, h * 0.20 + sy, 1.8), fill=(255, 222, 0))
+    # gavel and sound block, foreground
+    gx0 = w * 0.43
+    s.rect(gx0 - 2, h - 8, gx0 + 36, h - 3, fill=(96, 62, 30))
+    s.poly([(gx0 + 8, h - 9), (gx0 + 20, h - 22), (gx0 + 24, h - 18), (gx0 + 12, h - 8)], fill=(150, 100, 50), outline=(86, 54, 26), width=0.8)
+    s.line([(gx0 + 20, h - 14), (gx0 + 34, h - 26)], (150, 100, 50), 2.4)
     return s.out()
 
 
 def ic_euuk(w, h):
     s = SD(w, h, (226, 234, 242))
-    vgrad(s, 0, h, (210, 224, 240), (180, 196, 214))
-    # Brussels skyline: glass HQ + Atomium
-    s.rect(w * 0.36, h * 0.40, w * 0.64, h, fill=(120, 140, 166))
-    for gx in range(int(w * 0.36) + 3, int(w * 0.64) - 3, 7):
-        s.line([(gx, h * 0.42), (gx, h)], (176, 196, 220), 0.8)
-    for gy in range(int(h * 0.46), int(h), 9):
-        s.line([(w * 0.36, gy), (w * 0.64, gy)], (176, 196, 220), 0.8)
-    s.rect(w * 0.64, h * 0.62, w * 0.76, h, fill=(104, 122, 146))
-    for k, (ax, ay) in enumerate(((0.86, 0.30), (0.80, 0.52), (0.92, 0.52), (0.86, 0.70))):
-        s.ell(w * ax - 5, h * ay - 5, w * ax + 5, h * ay + 5, fill=(186, 192, 202), outline=(100, 106, 116), width=1)
-    s.line([(w * 0.86, h * 0.30), (w * 0.86, h * 0.70)], (120, 126, 136), 1.4)
-    s.line([(w * 0.80, h * 0.52), (w * 0.92, h * 0.52)], (120, 126, 136), 1.4)
+    vgrad(s, 0, h, (122, 164, 216), (236, 242, 248))
+    cloud(s, 70, 12, 1.0, (255, 255, 255))
+    cloud(s, 120, 24, 0.7, (250, 252, 255))
+    ridge(s, h * 0.62, 5, 0, w, h, (170, 186, 206), 0.7, 0.06, 0.15)
+    # Atomium (back) + glass HQ blocks (mid)
+    ax, ay = w * 0.80, h * 0.40
+    for (px, py), (qx, qy) in (((0, -14), (0, 14)), ((-12, -4), (12, -4)), ((-12, -4), (0, 14)), ((12, -4), (0, 14)), ((-12, -4), (0, -14)), ((12, -4), (0, -14))):
+        s.line([(ax + px, ay + py), (ax + qx, ay + qy)], (140, 146, 158), 1.6)
+    for px, py in ((0, -14), (-12, -4), (12, -4), (0, 14), (0, 3)):
+        s.ell(ax + px - 5.5, ay + py - 5.5, ax + px + 5.5, ay + py + 5.5, fill=(206, 212, 222), outline=(110, 116, 126), width=1)
+        s.ell(ax + px - 3.5, ay + py - 4, ax + px - 0.5, ay + py - 1.5, fill=(250, 252, 255))
+    s.line([(ax, ay + 14), (ax, h * 0.86)], (120, 126, 136), 1.6)
+    s.rect(w * 0.20, h * 0.34, w * 0.40, h * 0.88, fill=(104, 126, 156))
+    s.rect(w * 0.38, h * 0.46, w * 0.62, h * 0.88, fill=(128, 150, 178))
+    for bx0, bx1, top in ((w * 0.20, w * 0.40, h * 0.34), (w * 0.38, w * 0.62, h * 0.46)):
+        for gx in range(int(bx0) + 3, int(bx1) - 2, 7):
+            s.line([(gx, top + 2), (gx, h * 0.88)], (176, 198, 224), 0.8)
+        for gy in range(int(top) + 5, int(h * 0.88), 7):
+            s.line([(bx0, gy), (bx1, gy)], (176, 198, 224), 0.8)
+    for gx, gy in ((w * 0.25, h * 0.52), (w * 0.31, h * 0.68), (w * 0.5, h * 0.62), (w * 0.44, h * 0.74)):
+        s.rect(gx, gy, gx + 5, gy + 4, fill=(250, 226, 150))
+    s.rect(0, h * 0.86, w, h, fill=(200, 202, 206))
+    s.rect(0, h * 0.86, w, h * 0.885, fill=(150, 152, 160))
     # flags on poles
-    s.line([(14, 10), (14, h - 4)], (70, 70, 76), 1.4)
-    eu_flag(s, 14, 10, 46, 30)
-    s.line([(w * 0.76 + 6, 10), (w * 0.76 + 6, h - 4)], (70, 70, 76), 1.4)
-    uk_flag(s, w * 0.76 + 6 - 46, 4, 46, 28)
-    # deal handshake badge
-    s.ell(w / 2 - 12, h - 24, w / 2 + 12, h, fill=(255, 255, 255), outline=(60, 60, 70), width=1.2)
-    s.line([(w / 2 - 7, h - 11), (w / 2 + 7, h - 11)], (60, 60, 70), 2)
-    s.line([(w / 2 - 3, h - 15), (w / 2 + 3, h - 7)], (60, 60, 70), 1.4)
+    s.line([(14, 8), (14, h * 0.9)], (70, 70, 76), 1.6)
+    eu_flag(s, 14, 8, 46, 31)
+    px = w * 0.64
+    s.line([(px, 6), (px, h * 0.9)], (70, 70, 76), 1.6)
+    uk_flag(s, px - 0.0, 6, 46, 28)
+    # handshake in the foreground: sleeves + clasped hands
+    cy = h - 12
+    s.poly([(w * 0.30, cy - 8), (w * 0.46, cy - 6), (w * 0.46, cy + 8), (w * 0.30, cy + 10)], fill=(30, 40, 80))
+    s.poly([(w * 0.70, cy - 8), (w * 0.54, cy - 6), (w * 0.54, cy + 8), (w * 0.70, cy + 10)], fill=(50, 56, 66))
+    s.rect(w * 0.30, cy - 3, w * 0.34, cy + 3, fill=(255, 255, 255))
+    s.rect(w * 0.66, cy - 3, w * 0.70, cy + 3, fill=(255, 255, 255))
+    s.ell(w * 0.44, cy - 8, w * 0.56, cy + 8, fill=(226, 184, 150), outline=(160, 120, 92), width=1)
+    for k in range(4):
+        s.line([(w * 0.46 + k * 4.5, cy - 6), (w * 0.47 + k * 4.5, cy + 5)], (170, 128, 98), 0.9)
     return s.out()
 
 
 def ic_japan(w, h):
     s = SD(w, h, (250, 244, 244))
-    vgrad(s, 0, h, (255, 255, 255), (226, 232, 244))
-    s.ell(w * 0.34, h * 0.14, w * 0.34 + 36, h * 0.14 + 36, fill=(200, 0, 40))  # rising sun
-    s.poly([(w * 0.18, h * 0.82), (w * 0.44, h * 0.30), (w * 0.52, h * 0.30), (w * 0.78, h * 0.82)], fill=(104, 124, 168))  # Fuji
-    s.poly([(w * 0.44, h * 0.30), (w * 0.42, h * 0.40), (w * 0.455, h * 0.37), (w * 0.48, h * 0.42), (w * 0.505, h * 0.37), (w * 0.53, h * 0.40), (w * 0.52, h * 0.30)], fill=(248, 250, 255))
+    vgrad(s, 0, h, (110, 138, 200), (255, 204, 178))
+    glow(s, w * 0.52, h * 0.62, 64, (255, 224, 190), 0.9)
+    s.ell(w * 0.46, h * 0.22, w * 0.46 + 34, h * 0.22 + 34, fill=(228, 40, 50))  # rising sun
+    cloud(s, 134, 34, 0.9, (255, 226, 214))
+    cloud(s, 84, 8, 0.7, (255, 220, 214))
+    # Fuji with snowcap + haze
+    s.poly([(w * 0.14, h * 0.88), (w * 0.44, h * 0.34), (w * 0.54, h * 0.34), (w * 0.84, h * 0.88)], fill=(96, 112, 158))
+    s.poly([(w * 0.44, h * 0.34), (w * 0.415, h * 0.45), (w * 0.455, h * 0.41), (w * 0.485, h * 0.47), (w * 0.515, h * 0.41), (w * 0.545, h * 0.45), (w * 0.54, h * 0.34)], fill=(250, 250, 255))
+    s.poly([(w * 0.14, h * 0.88), (w * 0.30, h * 0.60), (w * 0.40, h * 0.88)], fill=(86, 100, 146))
+    glow(s, w * 0.30, h * 0.90, 50, (255, 214, 190), 0.55)
+    # bay + reflection
+    vgrad(s, h * 0.80, h, (214, 150, 150), (90, 100, 140))
+    for k in range(6):
+        s.line([(14 + k * 24, h * 0.88 + (k % 2) * 4), (30 + k * 24, h * 0.88 + (k % 2) * 4)], (255, 214, 190), 0.9)
+    # skyline: two layers + lit windows
+    for k, (bx, bh, bw) in enumerate(((44, 16, 12), (58, 24, 10), (70, 14, 14), (86, 22, 10), (98, 12, 12), (112, 26, 10), (124, 18, 12), (140, 12, 10))):
+        s.rect(bx, h - bh - 4, bx + bw, h, fill=(96, 92, 122))
+    for k, (bx, bh, bw) in enumerate(((50, 18, 12), (64, 28, 12), (78, 18, 16), (94, 26, 12), (106, 16, 14), (120, 30, 12), (132, 20, 14), (146, 14, 12))):
+        s.rect(bx, h - bh, bx + bw, h, fill=(52, 56, 84))
+        lit_windows(s, bx, h - bh, bw, h, 2, (250, 226, 150))
     # Tokyo Tower
-    tx = w * 0.84
-    s.poly([(tx - 9, h), (tx, h * 0.08), (tx + 9, h)], fill=(214, 40, 24))
+    tx = w * 0.86
+    glow(s, tx, h * 0.5, 30, (255, 190, 170), 0.5)
+    s.poly([(tx - 10, h), (tx, h * 0.10), (tx + 10, h)], fill=(220, 44, 28))
     for k in range(1, 6):
-        yy = h * 0.08 + k * (h * 0.92) / 6
-        hw = 9 * (yy - h * 0.08) / (h * 0.92)
+        yy = h * 0.10 + k * (h * 0.90) / 6
+        hw = 10 * (yy - h * 0.10) / (h * 0.90)
         s.rect(tx - hw, yy, tx + hw, yy + 2.4, fill=(255, 255, 255))
-    s.line([(tx, h * 0.08), (tx, h * 0.0)], (60, 60, 60), 1.2)
-    # skyline
-    for k, (bx, bh, bw) in enumerate(((52, 22, 14), (66, 32, 12), (78, 20, 16), (94, 28, 12), (106, 18, 14), (120, 34, 12), (132, 22, 14), (146, 16, 12))):
-        s.rect(bx, h - bh, bx + bw, h, fill=(64, 70, 90))
-        lit_windows(s, bx, h - bh, bw, h, 2, (230, 220, 160))
-    # rising CPI bars (bottom left) + tag
-    for i in range(5):
-        bh = 8 + i * 6
-        s.rect(8 + i * 9, h - 4 - bh, 15 + i * 9, h - 4, fill=(200, 0, 40) if i > 2 else (110, 114, 124))
-    s.line([(8, h - 8), (52, h - 40)], (10, 10, 10), 1.4)
+    s.poly([(tx - 3, h * 0.36), (tx, h * 0.28), (tx + 3, h * 0.36)], fill=(255, 255, 255))
+    s.line([(tx, h * 0.10), (tx, h * 0.0)], (60, 60, 60), 1.2)
+    # rising CPI bars + arrow (bottom left)
+    for i in range(6):
+        bh = 7 + i * 6
+        s.rect(8 + i * 8, h - 4 - bh, 14 + i * 8, h - 4, fill=(228, 40, 50) if i > 2 else (110, 114, 130), outline=(255, 255, 255), width=0.6)
+    s.line([(8, h - 14), (30, h - 26), (44, h - 40)], (255, 255, 255), 1.6)
+    s.poly([(44, h - 44), (50, h - 42), (47, h - 36)], fill=(255, 255, 255))
+    for bx, by in ((150, 18), (160, 14), (168, 20)):  # birds
+        s.line([(bx, by), (bx + 3, by - 2), (bx + 6, by)], (60, 56, 80), 0.9)
     return s.out()
 
 
 def ic_cricket(w, h):
     s = SD(w, h, (140, 190, 232))
-    vgrad(s, 0, h, (122, 178, 230), (214, 232, 246))
-    # stands with crowd
-    s.rect(0, h * 0.30, w, h * 0.58, fill=(70, 74, 92))
-    cols = ((226, 70, 60), (240, 240, 240), (60, 110, 200), (250, 200, 60), (30, 30, 36))
-    for r in range(3):
-        for k in range(46):
-            s.ell(2 + k * 4.1, h * 0.33 + r * 6, 5 + k * 4.1, h * 0.33 + r * 6 + 3, fill=cols[(k * 3 + r * 2) % 5])
-    for tx in (14, w - 14):  # floodlights
-        s.line([(tx, h * 0.3), (tx, 4)], (80, 80, 90), 1.6)
-        s.rect(tx - 7, 2, tx + 7, 9, fill=(250, 250, 220), outline=(80, 80, 90), width=1)
-    s.rect(0, h * 0.58, w, h, fill=(78, 152, 70))
-    for k in range(0, int(w), 24):
-        s.rect(k, h * 0.58, k + 12, h, fill=(88, 164, 78))
-    s.rect(w * 0.22, h * 0.82, w * 0.78, h * 0.9, fill=(212, 196, 150))  # pitch
-    for k in range(3):  # stumps
-        s.rect(w * 0.70 + k * 4, h * 0.60, w * 0.70 + k * 4 + 1.6, h * 0.84, fill=(246, 238, 206))
-    # batter (NZ black) with bat
-    person(s, w * 0.52, h * 0.92, 36, (24, 24, 28))
-    s.poly([(w * 0.55, h * 0.74), (w * 0.57, h * 0.72), (w * 0.64, h * 0.92), (w * 0.62, h * 0.94)], fill=(224, 182, 110), outline=(120, 80, 30), width=1)
-    s.ell(w * 0.34, h * 0.60, w * 0.34 + 6, h * 0.60 + 6, fill=(200, 30, 40))
+    vgrad(s, 0, h, (100, 160, 226), (216, 234, 248))
+    cloud(s, 76, 7, 0.8, (255, 255, 255))
+    cloud(s, 118, 12, 0.6, (255, 255, 255))
+    # stands: upper + lower tier with crowd
+    s.rect(0, h * 0.20, w, h * 0.56, fill=(62, 66, 84))
+    s.rect(0, h * 0.20, w, h * 0.23, fill=(40, 42, 56))
+    cols = ((226, 70, 60), (240, 240, 240), (60, 110, 200), (250, 200, 60), (30, 30, 36), (120, 200, 120))
+    for r in range(5):
+        for k in range(48):
+            s.ell(1 + k * 3.95 + (r % 2) * 2, h * 0.25 + r * 5.2, 4 + k * 3.95 + (r % 2) * 2, h * 0.25 + r * 5.2 + 3.4, fill=cols[(k * 3 + r * 2) % 6])
+    for r in range(1, 5):
+        s.line([(0, h * 0.24 + r * 5.2), (w, h * 0.24 + r * 5.2)], (40, 44, 56), 0.7)
+    # floodlight pylons with glow
+    for tx in (16, w - 16):
+        glow(s, tx, 6, 22, (255, 255, 230), 0.8)
+        s.line([(tx, h * 0.30), (tx, 8)], (80, 80, 90), 1.6)
+        s.rect(tx - 9, 2, tx + 9, 9, fill=(250, 250, 224), outline=(80, 80, 90), width=1)
+        for k in range(4):
+            s.line([(tx - 7 + k * 4.6, 2), (tx - 7 + k * 4.6, 9)], (176, 176, 150), 0.6)
+    # outfield with mow stripes + boundary rope
+    s.rect(0, h * 0.56, w, h, fill=(70, 146, 64))
+    for k in range(-2, 12):
+        s.poly([(k * 22, h * 0.56), (k * 22 + 11, h * 0.56), (k * 22 + 11 - 24 + 0, h), (k * 22 - 24, h)], fill=(84, 162, 76))
+    s.rect(0, h * 0.56, w, h * 0.585, fill=(238, 238, 238))
+    # pitch in perspective
+    s.poly([(w * 0.42, h * 0.60), (w * 0.58, h * 0.60), (w * 0.68, h), (w * 0.32, h)], fill=(214, 198, 152))
+    s.line([(w * 0.40, h * 0.86), (w * 0.60, h * 0.86)], (250, 250, 240), 1.0)
+    for k in range(3):  # far stumps
+        s.rect(w * 0.488 + k * 2.6, h * 0.58, w * 0.488 + k * 2.6 + 1.0, h * 0.66, fill=(246, 238, 206))
+    head_person(s, w * 0.42, h * 0.66, 12, (230, 230, 232))   # wicketkeeper-ish
+    head_person(s, w * 0.56, h * 0.64, 11, (240, 240, 250))    # bowler
+    # batter (NZ black) with bat, near stumps
+    for k in range(3):
+        s.rect(w * 0.50 + k * 4, h * 0.70, w * 0.50 + k * 4 + 1.6, h * 0.92, fill=(246, 238, 206))
+    bxp, byp = w * 0.40, h * 0.99
+    s.ell(bxp - 5, byp - 36, bxp + 5, byp - 24, fill=(226, 192, 162))
+    s.pie([bxp - 6, byp - 38, bxp + 6, byp - 24], 180, 360, (20, 36, 80))
+    s.rect(bxp - 7, byp - 25, bxp + 7, byp - 4, fill=(26, 26, 30))
+    s.rect(bxp - 6, byp - 4, bxp + 6, byp, fill=(240, 240, 240))
+    s.poly([(bxp + 5, byp - 20), (bxp + 8, byp - 21), (bxp + 24, byp - 4), (bxp + 21, byp - 1)], fill=(224, 182, 110), outline=(120, 80, 30), width=0.8)
+    s.ell(w * 0.30, h * 0.66, w * 0.30 + 5, h * 0.66 + 5, fill=(200, 30, 40))
     # scoreboard
     s.rect(w - 52, h * 0.6, w - 8, h * 0.8, fill=(20, 22, 26), outline=(200, 200, 200), width=1)
     return s.out()
@@ -424,159 +594,248 @@ def ic_cricket(w, h):
 
 def ic_italy(w, h):
     s = SD(w, h, (236, 240, 246))
-    vgrad(s, 0, h, (190, 214, 240), (240, 244, 248))
-    # Colosseum
-    s.rect(w * 0.30, h * 0.14, w * 0.96, h * 0.80, fill=(212, 206, 204))
+    vgrad(s, 0, h, (126, 170, 226), (254, 236, 210))
+    glow(s, w * 0.2, h * 0.5, 50, (255, 244, 214), 0.8)
+    cloud(s, 24, 10, 0.8, (255, 250, 240))
+    cloud(s, 104, 6, 0.7, (255, 250, 240))
+    pine(s, w * 0.24, h * 0.78, 30, (52, 84, 54))
+    pine(s, w * 0.30, h * 0.80, 26, (58, 92, 58))
+    # Colosseum (curved tiers) with arches, shaded side
+    s.rect(w * 0.32, h * 0.10, w * 0.98, h * 0.80, fill=(218, 202, 180))
+    s.rect(w * 0.32, h * 0.10, w * 0.38, h * 0.80, fill=(196, 178, 154))
+    s.rect(w * 0.88, h * 0.18, w * 0.98, h * 0.80, fill=(190, 172, 150))
     for row in range(3):
-        for k in range(10):
-            ax = w * 0.32 + k * (w * 0.62) / 10
-            ay = h * 0.18 + row * h * 0.19
-            s.rect(ax, ay + 4, ax + 8, ay + h * 0.15, fill=(96, 88, 92))
-            s.pie([ax, ay, ax + 8, ay + 8], 180, 360, (96, 88, 92))
-        s.line([(w * 0.30, h * 0.14 + (row + 1) * h * 0.19 - 2), (w * 0.96, h * 0.14 + (row + 1) * h * 0.19 - 2)], (170, 164, 164), 1.2)
-    # tricolore + CGIL banner + crowd
-    pole_flag(s, 12, 8, h, 28, 18, [(0, 146, 70), (252, 252, 252), (206, 43, 55)], vertical=True)
-    s.line([(w * 0.34, h * 0.52), (w * 0.34, h)], (80, 60, 40), 1.6)
-    s.rect(w * 0.34, h * 0.52, w * 0.34 + 54, h * 0.52 + 16, fill=(206, 43, 55))
-    for k in range(26):
-        px = 6 + k * 7.2
-        col = ((60, 70, 100), (100, 60, 60), (50, 90, 80), (30, 30, 36))[k % 4]
-        person(s, px, h - 1, 20 + (k * 5) % 6, col)
-    for k in (3, 9, 15, 21):
-        s.line([(6 + k * 7.2, h - 14), (6 + k * 7.2, h - 34)], (80, 60, 40), 1.2)
-        s.rect(6 + k * 7.2, h - 34, 6 + k * 7.2 + 8, h - 28, fill=((0, 146, 70), (206, 43, 55))[k % 2])
+        for k in range(11):
+            ax = w * 0.35 + k * (w * 0.62) / 11
+            ay = h * 0.14 + row * h * 0.20
+            s.rect(ax, ay + 4, ax + 7, ay + h * 0.15, fill=(96, 78, 70))
+            s.pie([ax, ay, ax + 7, ay + 8], 180, 360, (96, 78, 70))
+        yb = h * 0.14 + (row + 1) * h * 0.20 - 2
+        s.line([(w * 0.32, yb), (w * 0.98, yb)], (160, 142, 122), 1.3)
+    s.rect(w * 0.32, h * 0.76, w * 0.98, h * 0.80, fill=(170, 150, 128))
+    # street + crowd of marchers with banners
+    s.rect(0, h * 0.80, w, h, fill=(150, 146, 148))
+    for k in range(30):
+        px = 5 + k * 6.2
+        col = ((60, 70, 100), (100, 60, 60), (50, 90, 80), (30, 30, 36), (210, 210, 214))[k % 5]
+        person(s, px, h - 1, 20 + (k * 5) % 7, col)
+    pole_flag(s, 12, 4, h, 30, 20, [(0, 146, 70), (252, 252, 252), (206, 43, 55)], vertical=True)
+    for k in (3, 8, 13, 18, 23, 27):
+        xx = 5 + k * 6.2
+        s.line([(xx, h - 14), (xx, h - 36)], (80, 60, 40), 1.2)
+        s.rect(xx, h - 36, xx + 11, h - 28, fill=((0, 146, 70), (206, 43, 55), (252, 252, 252))[k % 3], outline=(160, 160, 160), width=0.5)
+    # CGIL banner held across the crowd
+    s.line([(w * 0.38, h * 0.50), (w * 0.38, h * 0.70)], (80, 60, 40), 1.6)
+    s.line([(w * 0.70, h * 0.50), (w * 0.70, h * 0.70)], (80, 60, 40), 1.6)
+    s.rect(w * 0.38, h * 0.50, w * 0.70, h * 0.62, fill=(206, 43, 55))
+    s.rect(w * 0.38, h * 0.50, w * 0.70, h * 0.515, fill=(255, 255, 255))
     return s.out()
 
 
 def ic_kenya(w, h):
     s = SD(w, h, (250, 190, 120))
-    vgrad(s, 0, h, (244, 164, 104), (252, 232, 178))
-    s.ell(w * 0.66 - 14, h * 0.50 - 14, w * 0.66 + 14, h * 0.50 + 14, fill=(255, 244, 200))
-    s.poly([(0, h * 0.74), (w * 0.2, h * 0.58), (w * 0.4, h * 0.72), (w * 0.62, h * 0.56), (w, h * 0.72), (w, h), (0, h)], fill=(176, 120, 84))
-    s.rect(0, h * 0.78, w, h, fill=(196, 152, 98))
+    vgrad(s, 0, h, (120, 92, 150), (255, 190, 120))
+    vgrad(s, h * 0.35, h * 0.7, (232, 130, 96), (255, 226, 160))
+    glow(s, w * 0.66, h * 0.58, 52, (255, 240, 190), 0.95)
+    s.ell(w * 0.66 - 13, h * 0.58 - 13, w * 0.66 + 13, h * 0.58 + 13, fill=(255, 246, 210))
+    cloud(s, 22, 10, 0.8, (255, 190, 150))
+    cloud(s, 120, 18, 0.7, (255, 170, 140))
+    ridge(s, h * 0.66, 12, 0, w, h, (150, 102, 108), 0.9)
+    ridge(s, h * 0.74, 8, 0, w, h, (132, 88, 76), 2.4, 0.06, 0.16)
+    s.rect(0, h * 0.78, w, h, fill=(190, 140, 90))
+    s.rect(0, h * 0.78, w, h * 0.80, fill=(210, 160, 108))
+    for k in range(6):
+        s.ell(10 + k * 30, h * 0.88 + (k % 2) * 3, 40 + k * 30, h * 0.92 + (k % 2) * 3, fill=(176, 126, 80))
+    acacia(s, 150, h * 0.78, 1.2)
+    acacia(s, 18, h * 0.82, 1.0)
+    # flare stack with flame
+    fx = w * 0.20
+    s.line([(fx, h * 0.84), (fx, h * 0.30)], (50, 42, 38), 1.6)
+    glow(s, fx, h * 0.24, 14, (255, 190, 90), 0.9)
+    s.poly([(fx - 3, h * 0.30), (fx, h * 0.12), (fx + 3, h * 0.30)], fill=(255, 140, 30))
+    s.poly([(fx - 1.5, h * 0.30), (fx, h * 0.19), (fx + 1.5, h * 0.30)], fill=(255, 230, 120))
     # derrick
-    cx = w * 0.42
-    s.poly([(cx - 17, h * 0.9), (cx, h * 0.1), (cx + 17, h * 0.9)], outline=(44, 36, 32), width=1.8)
-    for k in range(1, 7):
-        yy = h * 0.1 + k * h * 0.8 / 7
-        hw = 17 * (yy - h * 0.1) / (h * 0.8)
+    cx = w * 0.46
+    s.poly([(cx - 16, h * 0.90), (cx, h * 0.08), (cx + 16, h * 0.90)], outline=(44, 36, 32), width=1.8)
+    for k in range(1, 8):
+        yy = h * 0.08 + k * h * 0.82 / 8
+        hw = 16 * (yy - h * 0.08) / (h * 0.82)
         s.line([(cx - hw, yy), (cx + hw, yy - 5)], (44, 36, 32), 1)
         s.line([(cx + hw, yy), (cx - hw, yy - 5)], (44, 36, 32), 1)
-    s.rect(cx - 5, h * 0.06, cx + 5, h * 0.12, fill=(44, 36, 32))
-    s.line([(cx, h * 0.12), (cx, h * 0.9)], (44, 36, 32), 1.4)
+    s.rect(cx - 5, h * 0.04, cx + 5, h * 0.10, fill=(44, 36, 32))
+    s.line([(cx, h * 0.10), (cx, h * 0.9)], (44, 36, 32), 1.4)
     s.rect(cx - 24, h * 0.84, cx + 26, h * 0.92, fill=(60, 54, 48))
-    # barrels + flag + acacia
+    # tanker truck + workers + barrels
+    s.rect(w * 0.64, h * 0.76, w * 0.84, h * 0.88, fill=(220, 220, 224), outline=(90, 90, 96), width=0.8)
+    s.rect(w * 0.84, h * 0.78, w * 0.90, h * 0.88, fill=(200, 50, 40))
+    for k in range(2):
+        s.ell(w * 0.68 + k * 22, h * 0.86, w * 0.68 + k * 22 + 8, h * 0.86 + 8, fill=(30, 30, 34), outline=(180, 180, 180), width=0.8)
+    s.ell(w * 0.85, h * 0.86, w * 0.85 + 8, h * 0.86 + 8, fill=(30, 30, 34), outline=(180, 180, 180), width=0.8)
+    for k, c in enumerate(((240, 140, 30), (230, 230, 230))):
+        px = w * 0.34 + k * 7
+        s.rect(px - 2.2, h * 0.86, px + 2.2, h * 0.98, fill=(50, 70, 110))
+        s.ell(px - 2.2, h * 0.80, px + 2.2, h * 0.86, fill=(220, 180, 150))
+        s.pie([px - 3, h * 0.78, px + 3, h * 0.855], 180, 360, c)
     for k in range(3):
-        s.rect(w * 0.68 + k * 12, h * 0.78, w * 0.68 + k * 12 + 10, h * 0.94, fill=(30, 30, 34), outline=(180, 40, 30), width=1)
-    pole_flag(s, w - 30, 14, h * 0.8, 24, 16, [(20, 20, 20), (200, 30, 36), (0, 120, 56)])
-    s.line([(14, h), (16, h * 0.62)], (50, 36, 26), 1.8)
-    s.ell(2, h * 0.5, 32, h * 0.64, fill=(60, 84, 40))
+        s.rect(w * 0.54 + k * 6, h * 0.90, w * 0.54 + k * 6 + 5, h * 0.99, fill=(30, 30, 34), outline=(190, 40, 30), width=0.8)
+    pole_flag(s, w - 22, 12, h * 0.78, 24, 16, [(20, 20, 20), (200, 30, 36), (0, 120, 56)])
     return s.out()
 
 
 def ic_poland(w, h):
     s = SD(w, h, (24, 30, 56))
-    vgrad(s, 0, h * 0.72, (14, 18, 44), (82, 66, 84))
-    for i in range(14):
-        s.ell((i * 71) % w, (i * 29) % (h * 0.4), (i * 71) % w + 1.2, (i * 29) % (h * 0.4) + 1.2, fill=(230, 225, 205))
-    s.rect(0, h * 0.72, w, h, fill=(66, 94, 60))
-    for k in range(0, int(w), 14):
-        s.line([(k, h * 0.76), (k + 8, h)], (52, 78, 48), 1)
-    # missile and trail
-    for t in range(18):
-        a = t / 17
-        qx, qy = 24 + a * 80, 6 + a * 26
-        s.ell(qx - 2 - a * 1.6, qy - 2 - a * 1.6, qx + 2 + a * 1.6, qy + 2 + a * 1.6, fill=(255, int(110 + 110 * a), 60))
-    s.poly([(106, 28), (128, 40), (122, 46), (100, 34)], fill=(214, 218, 224))
-    s.poly([(128, 40), (138, 48), (123, 45)], fill=(190, 40, 40))
-    # farmhouse + crater glow
-    s.rect(w * 0.55, h * 0.58, w * 0.55 + 28, h * 0.74, fill=(150, 130, 120))
-    s.poly([(w * 0.55 - 3, h * 0.58), (w * 0.55 + 14, h * 0.44), (w * 0.55 + 31, h * 0.58)], fill=(120, 50, 42))
-    s.rect(w * 0.55 + 18, h * 0.62, w * 0.55 + 23, h * 0.68, fill=(240, 190, 90))
-    s.ell(w * 0.50, h * 0.84, w * 0.50 + 40, h * 0.94, fill=(40, 36, 34))
-    s.ell(w * 0.50 + 12, h * 0.86, w * 0.50 + 28, h * 0.92, fill=(255, 140, 40))
-    # airport tower + plane
-    s.rect(w * 0.84, h * 0.46, w * 0.84 + 7, h * 0.80, fill=(150, 156, 168))
-    s.rect(w * 0.84 - 5, h * 0.36, w * 0.84 + 12, h * 0.46, fill=(190, 200, 214))
-    s.ell(w * 0.84 + 3, h * 0.30, w * 0.84 + 9, h * 0.36, fill=(230, 40, 40))
-    s.rect(w * 0.70, h * 0.76, w * 0.80, h * 0.82, fill=(236, 238, 242))
-    s.poly([(w * 0.74, h * 0.78), (w * 0.72, h * 0.66), (w * 0.76, h * 0.78)], fill=(200, 204, 212))
+    vgrad(s, 0, h * 0.7, (12, 16, 40), (96, 62, 74))
+    for i in range(22):
+        sx = (i * 71) % w
+        sy = (i * 29) % int(h * 0.4)
+        s.ell(sx, sy, sx + 1.2, sy + 1.2, fill=(230, 225, 205))
+    s.ell(w * 0.82 - 7, 6, w * 0.82 + 7, 20, fill=(240, 232, 200))
+    s.ell(w * 0.82 - 3, 4, w * 0.82 + 10, 18, fill=(12, 16, 40))
+    # distant treeline + fields in perspective with furrows
+    ridge(s, h * 0.66, 4, 0, w, h, (28, 44, 44), 0.5, 0.2, 0.5)
+    s.rect(0, h * 0.70, w, h, fill=(60, 88, 56))
+    for k in range(-6, 16):
+        s.line([(w * 0.5 + (k - 5) * 7, h * 0.70), (w * 0.5 + (k - 5) * 30, h)], (48, 74, 46), 1.0)
+    s.poly([(0, h * 0.8), (w * 0.4, h * 0.74), (w * 0.7, h * 0.76), (w, h * 0.74), (w, h * 0.78), (w * 0.4, h * 0.80), (0, h * 0.86)], fill=(98, 100, 62))
+    # missile with long glowing trail
+    for t in range(26):
+        a = t / 25
+        qx, qy = 10 + a * 100, 4 + a * 28
+        glow(s, qx, qy, 4 + a * 5, (255, int(120 + 100 * a), 60), 0.9)
+        s.ell(qx - 1.6 - a * 1.6, qy - 1.6 - a * 1.6, qx + 1.6 + a * 1.6, qy + 1.6 + a * 1.6, fill=(255, int(130 + 100 * a), 70))
+    s.poly([(108, 28), (130, 40), (124, 46), (102, 34)], fill=(214, 218, 224))
+    s.poly([(130, 40), (140, 48), (125, 45)], fill=(190, 40, 40))
+    # farmhouse, barn, trees, crater glow
+    glow(s, w * 0.52, h * 0.88, 30, (255, 150, 50), 0.7)
+    s.rect(w * 0.54, h * 0.58, w * 0.54 + 28, h * 0.74, fill=(160, 140, 126))
+    s.poly([(w * 0.54 - 3, h * 0.58), (w * 0.54 + 14, h * 0.44), (w * 0.54 + 31, h * 0.58)], fill=(126, 52, 42))
+    s.rect(w * 0.54 + 18, h * 0.62, w * 0.54 + 23, h * 0.68, fill=(250, 200, 100))
+    s.rect(w * 0.54 + 4, h * 0.62, w * 0.54 + 9, h * 0.68, fill=(250, 200, 100))
+    s.rect(w * 0.54 + 32, h * 0.62, w * 0.54 + 46, h * 0.74, fill=(122, 70, 56))
+    pine(s, w * 0.47, h * 0.75, 24, (22, 46, 36))
+    pine(s, w * 0.67, h * 0.76, 20, (22, 46, 36))
+    s.ell(w * 0.46, h * 0.86, w * 0.46 + 42, h * 0.97, fill=(40, 36, 34))
+    s.ell(w * 0.46 + 12, h * 0.88, w * 0.46 + 30, h * 0.95, fill=(255, 140, 40))
+    s.ell(w * 0.46 + 17, h * 0.90, w * 0.46 + 25, h * 0.94, fill=(255, 224, 120))
+    # airport tower, beacon, plane, searchlight
+    tx = w * 0.88
+    s.rect(tx, h * 0.46, tx + 7, h * 0.80, fill=(150, 156, 168))
+    s.rect(tx - 5, h * 0.36, tx + 12, h * 0.46, fill=(190, 200, 214))
+    s.rect(tx - 3, h * 0.38, tx + 10, h * 0.43, fill=(250, 214, 120))
+    glow(s, tx + 6, h * 0.30, 10, (255, 90, 90), 0.9)
+    s.ell(tx + 3, h * 0.28, tx + 9, h * 0.34, fill=(230, 40, 40))
+    s.poly([(tx + 6, h * 0.36), (tx + 40, h * 0.04), (tx + 46, h * 0.10)], fill=(150, 150, 120))
+    s.rect(w * 0.70, h * 0.80, w * 0.82, h * 0.86, fill=(236, 238, 242))
+    s.poly([(w * 0.74, h * 0.81), (w * 0.72, h * 0.68), (w * 0.76, h * 0.81)], fill=(200, 204, 212))
+    s.rect(w * 0.66, h * 0.88, w * 0.92, h * 0.90, fill=(86, 88, 96))
     pole_flag(s, 14, 20, h * 0.8, 26, 8, [(252, 252, 252), (220, 20, 60)])
     return s.out()
 
 
 def ic_iraq(w, h):
     s = SD(w, h, (226, 204, 160))
-    vgrad(s, 0, h, (238, 222, 190), (214, 190, 148))
-    # mud-brick compound with walls + gate
-    s.rect(w * 0.52, h * 0.38, w * 0.98, h * 0.82, fill=(196, 168, 128))
-    for k in range(7):
-        s.rect(w * 0.52 + k * 12, h * 0.32, w * 0.52 + k * 12 + 7, h * 0.38, fill=(196, 168, 128))
-    s.rect(w * 0.70, h * 0.52, w * 0.82, h * 0.82, fill=(70, 56, 44))
-    s.pie([w * 0.70, h * 0.44, w * 0.82, h * 0.6], 180, 360, (70, 56, 44))
+    vgrad(s, 0, h, (232, 196, 150), (246, 228, 190))
+    glow(s, w * 0.30, h * 0.44, 46, (255, 244, 214), 0.8)
+    s.ell(w * 0.30 - 8, h * 0.44 - 8, w * 0.30 + 8, h * 0.44 + 8, fill=(255, 248, 224))
+    ridge(s, h * 0.58, 8, 0, w, h, (214, 178, 134), 0.8, 0.05, 0.13)
+    ridge(s, h * 0.66, 6, 0, w, h, (194, 156, 112), 2.1, 0.07, 0.17)
+    # Euphrates strip with reeds
+    s.rect(0, h * 0.74, w, h * 0.80, fill=(110, 146, 150))
+    for k in range(12):
+        s.line([(6 + k * 16, h * 0.74), (8 + k * 16, h * 0.68)], (96, 130, 70), 1.0)
+    # mud-brick compound with crenellations, gate, tower
+    s.rect(w * 0.54, h * 0.38, w * 0.98, h * 0.82, fill=(190, 160, 120))
+    s.rect(w * 0.54, h * 0.38, w * 0.58, h * 0.82, fill=(170, 142, 104))
+    for k in range(8):
+        s.rect(w * 0.54 + k * 11.2, h * 0.32, w * 0.54 + k * 11.2 + 6.5, h * 0.38, fill=(190, 160, 120))
+    s.rect(w * 0.70, h * 0.54, w * 0.82, h * 0.82, fill=(70, 56, 44))
+    s.pie([w * 0.70, h * 0.46, w * 0.82, h * 0.62], 180, 360, (70, 56, 44))
+    s.rect(w * 0.86, h * 0.20, w * 0.95, h * 0.38, fill=(184, 152, 112))
+    s.rect(w * 0.88, h * 0.25, w * 0.91, h * 0.32, fill=(70, 56, 44))
     for k in range(3):
-        s.rect(w * 0.56 + k * 7, h * 0.50, w * 0.56 + k * 7 + 3, h * 0.58, fill=(80, 64, 50))
-    # palms
-    for px in (w * 0.46, w * 0.99):
-        s.line([(px, h * 0.84), (px - 2, h * 0.46)], (70, 52, 34), 2)
-        for ang in (-160, -130, -100, -50, -20):
-            a = math.radians(ang)
-            s.line([(px - 2, h * 0.46), (px - 2 + 13 * math.cos(a), h * 0.46 + 9 * math.sin(a) + 3)], (60, 110, 56), 1.6)
-    s.rect(0, h * 0.82, w, h, fill=(206, 178, 132))
-    # Iraqi flag
-    pole_flag(s, 14, 12, h * 0.84, 34, 21, [(206, 17, 38), (252, 252, 252), (20, 20, 20)])
-    # tanks column
-    for tx in (w * 0.04, w * 0.28):
-        yb = h * 0.96
-        s.rect(tx, yb - 15, tx + 52, yb - 4, fill=(86, 92, 62))
-        s.rect(tx + 12, yb - 24, tx + 36, yb - 15, fill=(98, 104, 72))
-        s.rect(tx + 36, yb - 22, tx + 66, yb - 19, fill=(70, 76, 52))
-        for k in range(5):
-            s.ell(tx + 3 + k * 9.6, yb - 10, tx + 11.6 + k * 9.6, yb - 2, fill=(50, 54, 38))
-    for k in range(4):  # dust
-        s.ell(w * 0.02 + k * 8, h * 0.90, w * 0.02 + k * 8 + 22, h * 0.99, fill=(222, 204, 170))
+        s.rect(w * 0.58 + k * 7, h * 0.52, w * 0.58 + k * 7 + 3, h * 0.60, fill=(80, 64, 50))
+    palm(s, w * 0.47, h * 0.84, 28)
+    palm(s, w * 0.52, h * 0.86, 22)
+    s.rect(0, h * 0.82, w, h, fill=(206, 176, 128))
+    s.rect(0, h * 0.82, w, h * 0.84, fill=(226, 198, 150))
+    # Iraqi flag, waving
+    s.line([(14, 10), (14, h * 0.86)], (70, 70, 76), 1.6)
+    flag_wave(s, 14, 12, 36, 22, [(206, 17, 38), (252, 252, 252), (20, 20, 20)])
+    # tanks column with soldiers + dust
+    for tx in (w * 0.03, w * 0.30):
+        yb = h * 0.97
+        s.rect(tx, yb - 15, tx + 52, yb - 4, fill=(96, 100, 66))
+        s.rect(tx + 12, yb - 25, tx + 36, yb - 15, fill=(108, 112, 76))
+        s.rect(tx + 36, yb - 23, tx + 68, yb - 20, fill=(76, 80, 54))
+        s.rect(tx + 20, yb - 29, tx + 24, yb - 25, fill=(70, 74, 50))
+        for k in range(6):
+            s.ell(tx + 3 + k * 8.2, yb - 10, tx + 11 + k * 8.2, yb - 2, fill=(50, 54, 38))
+    for k in range(7):
+        s.ell(w * 0.0 + k * 9, h * 0.88, w * 0.0 + k * 9 + 24, h * 0.99, fill=(230, 212, 178))
+    for k in range(4):
+        head_person(s, w * 0.60 + k * 7, h * 0.99, 17, (96, 100, 66), hair=(60, 70, 50))
     return s.out()
 
 
 def ic_whitehouse(w, h):
     s = SD(w, h, (170, 205, 235))
-    vgrad(s, 0, h, (116, 168, 222), (220, 234, 246))
+    vgrad(s, 0, h, (84, 142, 214), (226, 238, 248))
+    cloud(s, 18, 12, 1.0, (255, 255, 255))
+    cloud(s, 126, 8, 0.9, (255, 255, 255))
+    cloud(s, 86, 22, 0.6, (250, 252, 255))
     u = h / 76.0
-    s.rect(0, h - 10 * u, w, h, fill=(92, 140, 80))
-    cx = w * 0.42
-    wall, shade = (246, 244, 238), (186, 184, 178)
-    s.rect(cx - 70, h - 34 * u, cx + 70, h - 10 * u, fill=wall, outline=shade, width=1)
-    for x in range(int(cx - 66), int(cx + 66), 9):
+    # tree lines + Washington Monument far
+    ridge(s, h - 16 * u, 4, 0, w, h, (60, 110, 76), 0.6, 0.12, 0.3)
+    s.poly([(w * 0.12 - 2.5, h - 16 * u), (w * 0.12, h - 52 * u), (w * 0.12 + 2.5, h - 16 * u)], fill=(238, 238, 232), outline=(180, 180, 176), width=0.6)
+    s.rect(0, h - 11 * u, w, h, fill=(92, 148, 80))
+    for k in range(8):
+        s.rect(0, h - 11 * u + k * 1.6, w, h - 11 * u + k * 1.6 + 0.6, fill=(104, 160, 90))
+    cx = w * 0.40
+    wall, shade = (248, 246, 240), (186, 184, 178)
+    s.rect(cx - 74, h - 34 * u, cx + 74, h - 10 * u, fill=wall, outline=shade, width=1)
+    s.rect(cx - 74, h - 34 * u, cx + 74, h - 32 * u, fill=(226, 224, 218))
+    for x in range(int(cx - 70), int(cx + 70), 9):
         if abs(x - cx) > 28:
-            s.rect(x, h - 29 * u, x + 4, h - 20 * u, fill=(90, 110, 140))
+            s.rect(x, h - 29 * u, x + 4, h - 20 * u, fill=(86, 106, 138))
+            s.rect(x, h - 29 * u, x + 4, h - 28 * u, fill=wall)
     s.rect(cx - 30, h - 46 * u, cx + 30, h - 34 * u, fill=wall, outline=shade, width=1)
     s.poly([(cx - 34, h - 46 * u), (cx, h - 58 * u), (cx + 34, h - 46 * u)], fill=wall, outline=shade, width=1)
     for i in range(6):
         x = cx - 24 + i * 9.6
         s.rect(x - 2, h - 45 * u, x + 2, h - 34 * u, fill=(255, 255, 255), outline=shade, width=1)
+    s.rect(cx - 5, h - 30 * u, cx + 5, h - 22 * u, fill=(70, 64, 60))
     s.line([(cx, h - 58 * u), (cx, h - 72 * u)], (60, 60, 60), 1.2)
-    s.poly([(cx, h - 72 * u), (cx + 16, h - 68 * u), (cx, h - 64 * u)], fill=(190, 30, 45))
-    s.ell(cx - 20, h - 9 * u, cx + 20, h - 3 * u, fill=(150, 196, 232), outline=(220, 230, 240), width=1)  # fountain pool
-    # podium, microphones, flags
-    px = w * 0.86
-    s.rect(px - 15, h - 28 * u, px + 15, h - 10 * u, fill=(34, 40, 64))
-    s.rect(px - 18, h - 30 * u, px + 18, h - 28 * u, fill=(70, 78, 110))
+    flag_wave(s, cx, h - 72 * u, 16, 8, [(190, 30, 45)], wave=0.6)
+    for tx in (cx - 82, cx + 80):
+        pine(s, tx, h - 8 * u, 30, (44, 96, 60))
+    s.ell(cx - 22, h - 9 * u, cx + 22, h - 3 * u, fill=(150, 196, 232), outline=(220, 230, 240), width=1)
+    s.line([(cx, h - 7 * u), (cx, h - 15 * u)], (230, 244, 255), 1.4)
+    s.line([(cx - 6, h - 7 * u), (cx - 8, h - 12 * u)], (230, 244, 255), 0.9)
+    s.line([(cx + 6, h - 7 * u), (cx + 8, h - 12 * u)], (230, 244, 255), 0.9)
+    # press podium with seal, mics, flags, camera crew
+    px = w * 0.84
+    s.rect(px - 16, h - 28 * u, px + 16, h - 6 * u, fill=(34, 40, 64))
+    s.rect(px - 19, h - 30 * u, px + 19, h - 28 * u, fill=(70, 78, 110))
+    s.ell(px - 5, h - 25 * u, px + 5, h - 15 * u, fill=(226, 196, 110))
     s.line([(px - 4, h - 30 * u), (px - 4, h - 36 * u)], (20, 20, 20), 1.2)
     s.ell(px - 6, h - 39 * u, px - 2, h - 36 * u, fill=(20, 20, 20))
     s.line([(px + 5, h - 30 * u), (px + 5, h - 37 * u)], (20, 20, 20), 1.2)
     s.ell(px + 3, h - 40 * u, px + 7, h - 37 * u, fill=(20, 20, 20))
-    s.line([(w - 6, h - 8 * u), (w - 6, 8)], (70, 70, 76), 1.4)
-    s.poly([(w - 6, 8), (w - 28, 12), (w - 6, 16 + 4)], fill=(190, 30, 45))
-    s.line([(px - 24, h - 8 * u), (px - 24, 14)], (70, 70, 76), 1.4)
-    s.rect(px - 24, 14, px - 4, 26, fill=(0, 40, 104))
+    s.line([(px - 28, h - 6 * u), (px - 28, 10)], (70, 70, 76), 1.4)
+    flag_wave(s, px - 28, 10, 18, 11, [(0, 40, 104)], wave=0.8)
+    s.line([(w - 5, h - 6 * u), (w - 5, 10)], (70, 70, 76), 1.4)
+    flag_wave(s, w - 25, 10, 20, 12, [(190, 30, 45), (255, 255, 255), (190, 30, 45), (255, 255, 255)], wave=0.8)
+    for k in range(3):
+        head_person(s, px - 12 + k * 10, h - 1, 15, (50, 54, 70) if k != 1 else (90, 60, 60))
     return s.out()
+
 
 
 MAP = {
     "na": [(-168, 66), (-156, 71), (-125, 70), (-95, 70), (-80, 63), (-65, 60), (-56, 52), (-66, 45), (-70, 42), (-76, 35), (-81, 30), (-80, 25), (-84, 30), (-90, 29), (-97, 26), (-97, 20), (-90, 21), (-87, 21), (-83, 10), (-78, 8), (-85, 10), (-92, 15), (-105, 20), (-112, 28), (-117, 32), (-124, 40), (-124, 48), (-135, 57), (-150, 60), (-160, 58), (-165, 62)],
     "gl": [(-72, 78), (-55, 82), (-25, 82), (-20, 72), (-40, 64), (-50, 62), (-58, 70)],
     "sa": [(-78, 8), (-72, 12), (-62, 10), (-50, 0), (-35, -6), (-39, -15), (-48, -26), (-58, -35), (-65, -42), (-68, -52), (-74, -50), (-73, -40), (-71, -20), (-76, -14), (-81, -5), (-79, 1)],
-    "eu": [(-10, 36), (-9, 43), (-2, 44), (-4, 48), (2, 51), (8, 54), (8, 57), (12, 56), (14, 54), (22, 55), (28, 60), (22, 63), (18, 60), (16, 56), (10, 58), (5, 60), (5, 62), (14, 68), (25, 71), (31, 70), (40, 67), (60, 69), (70, 73), (80, 73), (100, 77), (115, 74), (140, 72), (160, 70), (180, 68), (180, 65), (165, 60), (156, 51), (150, 59), (140, 54), (135, 44), (129, 41), (129, 35), (126, 35), (125, 39), (121, 40), (122, 31), (120, 25), (110, 20), (108, 16), (109, 11), (105, 9), (100, 13), (100, 5), (104, 1), (98, 8), (98, 16), (94, 17), (92, 22), (87, 21), (80, 15), (77, 8), (73, 17), (72, 21), (67, 24), (57, 26), (50, 30), (48, 29), (51, 25), (56, 26), (58, 23), (52, 16), (43, 13), (35, 28), (34, 31), (36, 36), (28, 37), (26, 40), (23, 38), (22, 37), (19, 41), (18, 40), (13, 44), (9, 44), (3, 43), (0, 39), (-6, 36)],
+    "eu": [(-10, 36), (-9, 43), (-2, 44), (-4, 48), (2, 51), (8, 54), (8, 57), (12, 56), (14, 54), (22, 55), (28, 60), (22, 63), (18, 60), (16, 56), (10, 58), (5, 60), (5, 62), (14, 68), (25, 71), (31, 70), (40, 67), (60, 69), (70, 73), (80, 73), (100, 77), (115, 74), (140, 72), (160, 70), (180, 68), (180, 65), (165, 60), (156, 51), (150, 59), (140, 54), (135, 44), (129, 41), (129, 35), (126, 35), (125, 39), (121, 40), (122, 31), (120, 25), (110, 20), (108, 16), (109, 11), (105, 9), (100, 13), (100, 5), (104, 1), (98, 8), (98, 16), (94, 17), (92, 22), (87, 21), (80, 15), (77, 8), (73, 17), (72, 21), (67, 24), (57, 26), (50, 30), (48, 29), (51, 25), (56, 26), (58, 23), (52, 16), (49, 14.3), (45, 13), (43, 13), (35, 28), (34, 31), (36, 36), (28, 37), (26, 40), (23, 38), (22, 37), (19, 41), (18, 40), (13, 44), (9, 44), (3, 43), (0, 39), (-6, 36)],
     "af": [(-17, 21), (-6, 35), (10, 37), (32, 31), (43, 12), (51, 12), (40, -5), (40, -15), (35, -25), (27, -34), (18, -34), (12, -17), (9, -1), (8, 4), (-8, 4), (-17, 14)],
     "au": [(114, -22), (122, -18), (130, -12), (137, -12), (142, -11), (146, -19), (153, -27), (150, -37), (141, -38), (131, -31), (115, -34)],
     "uk": [(-6, 50), (2, 51), (0, 53), (-3, 58), (-6, 57), (-5, 54), (-3, 54)],
@@ -597,7 +856,7 @@ PINS = [
     (16, -121.9, 37.4), (17, -122.4, 37.8), (18, 121.5, 25.0), (19, 139.7, 35.7), (20, 127.0, 37.5),
     (21, 116.4, 39.9), (22, 2.2, 41.4), (23, 42.5, 17.0), (24, 33.8, -14.0), (25, -115.1, 36.2),
     (26, 114.1, 22.5), (27, 56.3, 26.6), (28, 49.1, 14.5), (29, 7.5, 9.1), (30, 13.4, 52.5),
-    (31, 30.7, 46.5), (32, 21.0, 52.2), (33, -75.7, 45.4),
+    (31, 30.7, 46.5), (32, 21.0, 52.2), (33, -74.0, 40.7),
 ]
 
 
@@ -698,31 +957,32 @@ REGIONS = [
 
 
 def draw_map(page, x, y, w, h):
-    lon0, lon1, lat0, lat1 = -170.0, 190.0, 78.0, -52.0
+    lon0, lon1, lat0, lat1 = -132.0, 181.0, 74.0, -48.0
 
     def pr(lon, lat):
         return ((lon - lon0) / (lon1 - lon0) * w, (lat0 - lat) / (lat0 - lat1) * h)
 
     s = SD(w, h, SEA)
-    for lon in range(-150, 190, 30):
-        s.line([pr(lon, lat0), pr(lon, lat1)], (206, 214, 226), 0.7)
-    for lat in range(60, -52, -30):
-        s.line([pr(lon0, lat), pr(lon1, lat)], (206, 214, 226), 0.7)
+    for lon in range(-120, 181, 30):
+        s.line([pr(lon, lat0), pr(lon, lat1)], (210, 218, 230), 0.7)
+    for lat in range(60, -48, -30):
+        s.line([pr(lon0, lat), pr(lon1, lat)], (210, 218, 230), 0.7)
     for pts in MAP.values():
         s.poly([pr(*p) for p in pts], fill=LAND, outline=(120, 126, 138), width=1)
     page.paste(s.out(), (x, y))
     d = ImageDraw.Draw(page)
     d.rectangle([x, y, x + w - 1, y + h - 1], outline=INK, width=2)
-    r = 6.2
+    r = MAP_R
     true = [pr(lon, lat) for n, lon, lat in PINS]
     pos = place_pins(true, w, h, r)
     for (tx, ty), (cx_, cy_) in zip(true, pos):
         d.line([x + tx, y + ty, x + cx_, y + cy_], fill=INK, width=1)
-        d.ellipse([x + tx - 1.5, y + ty - 1.5, x + tx + 1.5, y + ty + 1.5], fill=INK)
-    nf = F(SANS_B, 8)
+        d.ellipse([x + tx - 1.6, y + ty - 1.6, x + tx + 1.6, y + ty + 1.6], fill=INK)
+    nf = F(SANS_B, MAP_R * 2 - 4)
     for (n, _, _), (cx_, cy_) in zip(PINS, pos):
         d.ellipse([x + cx_ - r, y + cy_ - r, x + cx_ + r, y + cy_ + r], fill=RED, outline=(255, 255, 255), width=1)
         d.text((x + cx_, y + cy_ + 0.5), str(n), font=nf, fill=(255, 255, 255), anchor="mm")
+    return true, pos
 
 
 def tag(d, x, y, text, font, fg, bg=(10, 10, 10)):
@@ -784,7 +1044,7 @@ def main(outdir):
 
     # masthead: huge bold sans, red underline bar
     mtxt = "Friday 20 November 2026"
-    mf = fit_line(mtxt, SANS_B, CW, 60, 40)
+    mf = fit_line(mtxt, SANS_B, CW, MAST_PT, 40)
     d.text((L - 2, 24), mtxt, font=mf, fill=INK)
     y = 24 + int(mf.size * 1.12) + 2
     d.rectangle([L, y, R, y + 5], fill=RED)
@@ -802,18 +1062,18 @@ def main(outdir):
              ("2.3%", "Japan's October inflation", INK), ("118", "Phillips' runs against India", INK)]
     cw = CW / len(stats)
     nf = F(SANS_B, 32)
-    cf = F(SANS, 10)
+    cf = F(SANS, 11)
     sy = y
     for i, (num, cap, col) in enumerate(stats):
         ccx = L + cw * i + cw / 2
-        ctext(d, ccx, sy - 2, num, fit_line(num, SANS_B, cw - 12, 32, 14), col)
-        cl = wrap(cap, cf, cw - 14)
+        ctext(d, ccx, sy - 3, num, fit_line(num, SANS_B, cw - 12, 32, 14), col)
+        cl = wrap(cap, cf, cw - 10)
         assert len(cl) <= 2
         for j, c in enumerate(cl):
-            ctext(d, ccx, sy + 34 + j * 12, c, cf, GREY)
+            ctext(d, ccx, sy + 32 + j * 12, c, cf, GREY)
         if i:
-            d.line([L + cw * i, sy + 2, L + cw * i, sy + 58], fill=RULE, width=1)
-    y = sy + 62
+            d.line([L + cw * i, sy + 2, L + cw * i, sy + 56], fill=RULE, width=1)
+    y = sy + 61
     rule(d, L, R, y, 1)
     y += 6
 
@@ -828,12 +1088,12 @@ def main(outdir):
             wseg = R - x
         d.rectangle([x, y, x + wseg - 1, y + bh], fill=RCOL[i])
         lab = "%s %d" % (name, len(ns))
-        lf = fit_line(lab, SANS_B, wseg - 8, 10, 7)
+        lf = fit_line(lab, SANS_B, wseg - 8, 11, 7)
         d.text((x + wseg / 2, y + bh / 2 + 1), lab, font=lf, fill=(255, 255, 255), anchor="mm")
         if x > L:
             d.line([x, y, x, y + bh], fill=PAPER, width=2)
         x += wseg
-    y += bh + 8
+    y += bh + 6
 
     # lead stories
     gap = 14
@@ -847,15 +1107,15 @@ def main(outdir):
         img, pts = res if isinstance(res, tuple) else (res, None)
         frame_panel(page, img, x0, ly, i + 1)
         overlay(d, i + 1, x0, ly, colw, ih, pts)
-        ty = ly + ih + 6
-        d.text((x0, ty), kick, font=F(SANS_B, 10), fill=RED)
-        ty += 14
-        hf, hl, hlh = fit_block(head, SANS_B, colw, 2, 19, 13, 1.1)
+        ty = ly + ih + 5
+        d.text((x0, ty), kick, font=F(SANS_B, 11), fill=RED)
+        ty += 15
+        hf, hl, hlh = fit_block(head, SANS_B, colw, 2, LEAD_HEAD_PT, 13, 1.08)
         for ln in hl:
             d.text((x0, ty), ln, font=hf, fill=INK)
             ty += hlh
         ty += 3
-        bf, bl, blh = fit_block(body, SANS, colw, 4, 11, 9, 1.22)
+        bf, bl, blh = fit_block(body, SANS, colw, 4, LEAD_BODY_PT, 9, 1.22)
         for ln in bl:
             d.text((x0, ty), ln, font=bf, fill=GREY)
             ty += blh
@@ -863,13 +1123,18 @@ def main(outdir):
     for i in range(2):
         xx = L + (i + 1) * (colw + gap) - gap // 2
         d.line([xx, ly, xx, ty_max], fill=RULE, width=1)
-    y = ty_max + 3
+    y = ty_max + 2
     rule(d, L, R, y, 2)
-    y += 6
+    y += 5
 
-    # features: two rows of five
+    # features: two rows of five (one uniform headline size and one uniform body size)
     fgap = 10
     fw = (CW - 4 * fgap) // 5
+    fh_size = max(s_ for s_ in range(FEAT_HEAD_PT, 9, -1)
+                  if all(len(wrap(h_, F(SANS_B, s_), fw)) <= 2 and all(F(SANS_B, s_).getlength(l) <= fw for l in wrap(h_, F(SANS_B, s_), fw)) for _, h_, _, _ in FEATS))
+    fb_size = max(s_ for s_ in range(FEAT_BODY_PT, 8, -1)
+                  if all(len(wrap(b_, F(SANS, s_), fw)) <= FEAT_BODY_LINES for _, _, b_, _ in FEATS))
+    fhf, fbf = F(SANS_B, fh_size), F(SANS, fb_size)
     for r in range(2):
         ry = y
         rmax = 0
@@ -880,42 +1145,40 @@ def main(outdir):
             img = fn(fw, FEAT_H)
             frame_panel(page, img, x0, ry, n)
             overlay(d, n, x0, ry, fw, FEAT_H, None)
-            ty = ry + FEAT_H + 4
-            d.text((x0, ty), kick, font=fit_line(kick, SANS_B, fw, 9, 6), fill=RED)
-            ty += 12
-            hf, hl, hlh = fit_block(head, SANS_B, fw, 2, 14, 10, 1.1)
-            for ln in hl:
-                d.text((x0, ty), ln, font=hf, fill=INK)
-                ty += hlh
+            ty = ry + FEAT_H + 3
+            d.text((x0, ty), kick, font=fit_line(kick, SANS_B, fw, 10, 6), fill=RED)
+            ty += 13
+            for ln in wrap(head, fhf, fw):
+                d.text((x0, ty), ln, font=fhf, fill=INK)
+                ty += int(fh_size * 1.08)
             ty += 2
-            bf, bl, blh = fit_block(body, SANS, fw, 4, 10, 8, 1.2)
-            for ln in bl:
-                d.text((x0, ty), ln, font=bf, fill=GREY)
-                ty += blh
+            for ln in wrap(body, fbf, fw):
+                d.text((x0, ty), ln, font=fbf, fill=GREY)
+                ty += int(fb_size * 1.2)
             rmax = max(rmax, ty)
         for c in range(1, 5):
             xx = L + c * (fw + fgap) - fgap // 2
             d.line([xx, ry, xx, rmax], fill=RULE, width=1)
-        y = rmax + 3
+        y = rmax + 2
         rule(d, L, R, y, 2 if r == 1 else 1)
-        y += 6
+        y += 5
 
-    # bottom: map (left), briefs (right)
-    mw, mh = 322, MAP_H
-    d.text((L, y), "WHERE IT HAPPENED", font=F(SANS_B, 10), fill=RED)
+    # bottom: bigger map (left), briefs (right)
+    mw, mh = MAP_W, MAP_H
+    d.text((L, y), "WHERE IT HAPPENED", font=F(SANS_B, 11), fill=RED)
     bx = L + mw + 14
     bw = R - bx
-    d.text((bx, y), "ALSO ON FRIDAY 20 NOVEMBER — 20 MORE STORIES", font=F(SANS_B, 10), fill=RED)
-    y0 = y + 14
+    d.text((bx, y), "ALSO ON FRIDAY 20 NOVEMBER \u2014 20 MORE STORIES", font=F(SANS_B, 11), fill=RED)
+    y0 = y + 15
     draw_map(page, L, y0, mw, mh)
-    d.text((L, y0 + mh + 3), "Numbers mark all 33 stories; positions approximate.", font=F(SANS, 9), fill=GREY)
+    d.text((L, y0 + mh + 3), "Numbers mark all 33 stories.", font=F(SANS, 10), fill=GREY)
 
     colb = (bw - 12) // 2
     bsize = BRIEF_PT
     bf = F(SANS, bsize)
     indent = 20
     items = [(str(14 + k), wrap(t, bf, colb - indent)) for k, t in enumerate(BRIEFS)]
-    lhb = bsize + 2
+    lhb = int(bsize * 1.2)
     cols = [items[:10], items[10:]]
     brief_bottom = 0
     for ci, col in enumerate(cols):
@@ -929,7 +1192,7 @@ def main(outdir):
             yy += 1
         brief_bottom = max(brief_bottom, yy)
     d.line([bx + colb + 6, y0, bx + colb + 6, brief_bottom], fill=RULE, width=1)
-    y = max(y0 + mh + 14, brief_bottom) + 4
+    y = max(y0 + mh + 16, brief_bottom) + 4
 
     # DATE CHECK box (full width, red)
     dc = ("DATE CHECK — First reported Thursday 19 Nov, so NOT shown as Friday's news: Bukele's third-term filing "
@@ -964,14 +1227,19 @@ def main(outdir):
     efnt = fit_line(ev, SANS_B, CW, 11, 8)
     ctext(d, cx, y, ev, efnt, INK)
     y += 14
-    print("content ends at y=", y, "mast", mf.size, "brief_bottom", brief_bottom, "dc", dcf.size, "src", sfnt.size)
+    print("content ends at y=", y, "mast", mf.size, "head/body", fh_size, fb_size, "brief_bottom", brief_bottom, "dc", dcf.size, "src", sfnt.size)
     assert y <= H - 8, y
 
     os.makedirs(outdir, exist_ok=True)
     page.save(os.path.join(outdir, "entry.png"), optimize=True)
 
 
-LEAD_H, FEAT_H, MAP_H, BRIEF_PT = 108, 66, 118, 10
+MAST_PT = 52
+LEAD_H, FEAT_H = 84, 60
+LEAD_HEAD_PT, LEAD_BODY_PT = 22, 13
+FEAT_HEAD_PT, FEAT_BODY_PT, FEAT_BODY_LINES = 15, 12, 3
+MAP_W, MAP_H, MAP_R = 380, 158, 7
+BRIEF_PT = 10
 
 if __name__ == "__main__":
     main(sys.argv[1] if len(sys.argv) > 1 else os.path.dirname(os.path.abspath(__file__)))
